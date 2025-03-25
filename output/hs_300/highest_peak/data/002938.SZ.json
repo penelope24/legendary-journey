@@ -1,0 +1,10 @@
+{
+  "stock_code": "002938.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20201009",
+  "peak_price": 58.84,
+  "buy_date": "20240409",
+  "buy_price": 17.652,
+  "prediction_time": "2025-03-26 00:50:40"
+}

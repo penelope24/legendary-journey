@@ -1,0 +1,10 @@
+{
+  "stock_code": "002311.SZ",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20211224",
+  "peak_price": 74.65,
+  "buy_date": "20250624",
+  "buy_price": 22.395,
+  "prediction_time": "2025-03-26 00:41:15"
+}

@@ -1,0 +1,10 @@
+{
+  "stock_code": "002463.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20190920",
+  "peak_price": 28.72,
+  "buy_date": "20230320",
+  "buy_price": 8.616,
+  "prediction_time": "2025-03-26 00:41:11"
+}

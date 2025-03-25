@@ -1,0 +1,10 @@
+{
+  "stock_code": "002812.SZ",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20220624",
+  "peak_price": 261.87,
+  "buy_date": "20251224",
+  "buy_price": 78.56099999999999,
+  "prediction_time": "2025-03-26 00:46:20"
+}

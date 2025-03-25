@@ -1,0 +1,10 @@
+{
+  "stock_code": "002007.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20200731",
+  "peak_price": 64.93,
+  "buy_date": "20240131",
+  "buy_price": 19.479000000000003,
+  "prediction_time": "2025-03-26 00:48:27"
+}

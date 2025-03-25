@@ -1,0 +1,10 @@
+{
+  "stock_code": "300999.SZ",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20210122",
+  "peak_price": 131.99,
+  "buy_date": "20240722",
+  "buy_price": 39.597,
+  "prediction_time": "2025-03-26 00:47:28"
+}

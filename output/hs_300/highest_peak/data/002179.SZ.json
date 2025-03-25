@@ -1,0 +1,10 @@
+{
+  "stock_code": "002179.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20211203",
+  "peak_price": 103.33,
+  "buy_date": "20250603",
+  "buy_price": 30.999,
+  "prediction_time": "2025-03-26 00:42:16"
+}

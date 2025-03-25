@@ -1,0 +1,10 @@
+{
+  "stock_code": "002601.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20120316",
+  "peak_price": 104.8,
+  "buy_date": "20150916",
+  "buy_price": 31.439999999999998,
+  "prediction_time": "2025-03-26 00:51:09"
+}

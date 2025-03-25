@@ -1,0 +1,10 @@
+{
+  "stock_code": "002142.SZ",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20220408",
+  "peak_price": 39.67,
+  "buy_date": "20251008",
+  "buy_price": 11.901,
+  "prediction_time": "2025-03-26 00:44:17"
+}

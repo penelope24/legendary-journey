@@ -1,0 +1,10 @@
+{
+  "stock_code": "688041.SH",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20230428",
+  "peak_price": 94.15,
+  "buy_date": "20261028",
+  "buy_price": 28.245,
+  "prediction_time": "2025-03-26 00:42:58"
+}

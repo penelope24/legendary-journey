@@ -1,0 +1,10 @@
+{
+  "stock_code": "300408.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20150515",
+  "peak_price": 81.0,
+  "buy_date": "20181115",
+  "buy_price": 24.3,
+  "prediction_time": "2025-03-26 00:41:51"
+}

@@ -1,0 +1,10 @@
+{
+  "stock_code": "600276.SH",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20201225",
+  "peak_price": 115.01,
+  "buy_date": "20240625",
+  "buy_price": 34.503,
+  "prediction_time": "2025-03-26 00:44:09"
+}

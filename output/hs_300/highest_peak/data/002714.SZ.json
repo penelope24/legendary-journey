@@ -1,0 +1,10 @@
+{
+  "stock_code": "002714.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20200424",
+  "peak_price": 128.4,
+  "buy_date": "20231024",
+  "buy_price": 38.52,
+  "prediction_time": "2025-03-26 00:45:32"
+}

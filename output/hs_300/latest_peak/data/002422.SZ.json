@@ -1,0 +1,10 @@
+{
+  "stock_code": "002422.SZ",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20130510",
+  "peak_price": 65.7,
+  "buy_date": "20161110",
+  "buy_price": 19.71,
+  "prediction_time": "2025-03-26 00:50:13"
+}

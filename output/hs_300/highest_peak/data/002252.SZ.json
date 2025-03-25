@@ -1,0 +1,10 @@
+{
+  "stock_code": "002252.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20150807",
+  "peak_price": 88.99,
+  "buy_date": "20190207",
+  "buy_price": 26.697,
+  "prediction_time": "2025-03-26 00:49:19"
+}

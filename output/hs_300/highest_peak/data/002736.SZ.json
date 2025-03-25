@@ -1,0 +1,10 @@
+{
+  "stock_code": "002736.SZ",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20150605",
+  "peak_price": 32.1,
+  "buy_date": "20181205",
+  "buy_price": 9.63,
+  "prediction_time": "2025-03-26 00:51:12"
+}

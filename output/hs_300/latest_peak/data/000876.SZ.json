@@ -1,0 +1,10 @@
+{
+  "stock_code": "000876.SZ",
+  "stock_name": "",
+  "strategy": "latest_peak",
+  "peak_date": "20200904",
+  "peak_price": 39.69,
+  "buy_date": "20240304",
+  "buy_price": 11.906999999999998,
+  "prediction_time": "2025-03-26 00:46:04"
+}

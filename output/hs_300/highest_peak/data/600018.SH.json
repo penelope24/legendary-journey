@@ -1,0 +1,10 @@
+{
+  "stock_code": "600018.SH",
+  "stock_name": "",
+  "strategy": "highest_peak",
+  "peak_date": "20150424",
+  "peak_price": 10.53,
+  "buy_date": "20181024",
+  "buy_price": 3.159,
+  "prediction_time": "2025-03-26 00:48:40"
+}
