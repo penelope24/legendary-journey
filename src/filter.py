@@ -1,0 +1,902 @@
+"""
+股票筛选算法实现
+
+基于历史高点和低点检测的股票筛选算法，包含两个阶段：
+1. 历史高点和低点检测
+2. 低点的回调与新低点预测
+"""
+
+from typing import Dict, List, Optional, Tuple, Any
+from datetime import datetime, timedelta
+import pandas as pd
+from dataclasses import dataclass
+import os
+import sys
+
+# 添加项目根目录到Python路径
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
+
+from src.peak import SignificantPeakAnalyzer, SignificantPeak
+from src.zigzag import ZigZag
+from src.data import StockInfoFetcher, Period
+
+@dataclass
+class Stage1Result:
+    """Stage 1 分析结果
+    
+    包含第一阶段（历史高点和低点检测）的所有分析结果。
+    
+    Attributes:
+        historical_peak (Tuple[str, float]): 历史最高点信息
+            - str: 时间，格式为'YYYYMMDD'
+            - float: 最高点价格
+        predicted_low (float): 预测低点价格
+            计算方法：历史最高点价格 * 0.3
+        time_window_end (datetime): 预测时间窗口的结束日期
+            计算方法：历史最高点时间 + 3.5年
+        actual_low (Optional[Tuple[str, float]]): 实际低点信息
+            - str: 时间，格式为'YYYYMMDD'
+            - float: 实际低点价格
+            如果未找到实际低点，则为None
+        is_early (bool): 实际低点是否提前出现
+            - True: 实际低点在时间窗口结束前出现
+            - False: 实际低点在时间窗口结束后出现或未出现
+        status (str): 分析状态
+            - "提前出现": 实际低点在时间窗口结束前出现
+            - "符合标准": 实际低点在时间窗口结束后出现
+            - "不满足条件": 未找到实际低点
+    """
+    historical_peak: Tuple[str, float]  # (时间, 价格)
+    predicted_low: float
+    time_window_end: datetime
+    actual_low: Optional[Tuple[str, float]]  # (时间, 价格)
+    is_early: bool
+    status: str
+
+@dataclass
+class Stage2Result:
+    """Stage 2 分析结果
+    
+    包含第二阶段（低点的回调与新低点预测）的所有分析结果。
+    
+    Attributes:
+        has_rebound (bool): 是否出现价格回调
+            - True: 价格涨幅超过70%
+            - False: 价格涨幅未达到70%
+        rebound_price (Optional[float]): 回调价格
+            - 第一次超过70%涨幅时的价格
+            - 如果未出现回调，则为None
+        predicted_second_low (Optional[float]): 预测的第二低点价格
+            - 计算方法：回调价格 * 0.3
+            - 如果未出现回调，则为None
+    """
+    has_rebound: bool
+    rebound_price: Optional[float]
+    predicted_second_low: Optional[float]
+
+class StockFilter:
+    """股票筛选器"""
+    
+    def __init__(self):
+        # Stage 1 参数
+        self.analysis_start_date = '2012-01-01'
+        self.price_threshold = 0.85  # 85%
+        self.time_window_years = 1.0
+        self.prediction_threshold = 0.3  # 30%
+        self.prediction_window_years = 3.5
+        
+        # Stage 2 参数
+        self.rebound_threshold = 0.7  # 70%
+        
+    def analyze_stock(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        分析单只股票
+        
+        Args:
+            df: 股票数据DataFrame，必须包含'trade_date'和'close'列
+            
+        Returns:
+            Dict[str, Any]: 分析结果
+        """
+        # Stage 1: 历史高点和低点检测（迭代版本）
+        stage1_results = self._analyze_stage1(df)
+        
+        # 如果没有找到任何结果，返回空结果
+        if not stage1_results:
+            return {
+                'stage1_results': [],
+                'stage2_results': []
+            }
+        
+        # 对每个Stage 1结果执行Stage 2分析
+        stage2_results = []
+        for stage1_result in stage1_results:
+            # 如果Stage 1没有找到实际低点，跳过Stage 2
+            if not stage1_result.actual_low:
+                stage2_results.append(None)
+                continue
+            
+            # Stage 2: 低点的回调与新低点预测
+            stage2_result = self._analyze_stage2(df, stage1_result)
+            stage2_results.append(stage2_result)
+        
+        return {
+            'stage1_results': stage1_results,
+            'stage2_results': stage2_results
+        }
+    
+    def _analyze_stage1(self, df: pd.DataFrame) -> List[Stage1Result]:
+        """
+        Stage 1: 历史高点和低点检测
+        
+        修改后的方法将迭代地查找历史高点和预测低点，当一个预测低点出现后，
+        继续寻找新的显著高点并重复分析过程。
+        
+        Returns:
+            List[Stage1Result]: 所有迭代分析的结果列表，按时间顺序排序
+        """
+        # 创建结果列表
+        results = []
+        
+        # 创建一个临时DataFrame副本用于分析
+        temp_df = df.copy()
+        
+        # 确保trade_date列是datetime类型
+        if not pd.api.types.is_datetime64_any_dtype(temp_df['trade_date']):
+            temp_df['trade_date'] = pd.to_datetime(temp_df['trade_date'])
+        
+        # 获取当前日期作为分析截止日期
+        current_date = pd.to_datetime(datetime.now())
+        
+        # 当前分析的起始日期
+        analysis_start_date = pd.to_datetime(self.analysis_start_date)
+        
+        # 首先对整个时间范围进行一次显著峰值分析，避免在每次迭代中重复计算
+        print("计算整个时间范围内的显著峰值...")
+        full_analyzer = SignificantPeakAnalyzer(temp_df)
+        full_peak_result = full_analyzer.analyze(
+            peak_threshold=self.price_threshold,
+            zigzag_threshold=0.06  # ZigZag阈值
+        )
+        
+        # 获取所有显著高点
+        all_significant_peaks = full_peak_result.get('significant_peaks', [])
+        
+        # 记录已经分析过的高点，避免重复分析
+        analyzed_peak_times = set()
+        
+        # 开始迭代分析
+        iteration = 1
+        continue_analysis = True
+        
+        while continue_analysis:
+            print(f"\n开始第{iteration}次迭代分析")
+            print(f"分析起始日期: {analysis_start_date}")
+            
+            # 筛选出当前分析范围内的数据
+            current_df = temp_df[(temp_df['trade_date'] >= analysis_start_date) & 
+                                (temp_df['trade_date'] <= current_date)]
+            
+            # 如果没有足够的数据，就结束迭代
+            if len(current_df) < 10:  # 假设需要至少10个数据点
+                print(f"数据点不足，结束迭代")
+                break
+            
+            # 从所有显著高点中筛选出当前分析区间内的高点
+            current_significant_peaks = []
+            for peak in all_significant_peaks:
+                peak_date = pd.to_datetime(peak.time)
+                if peak_date >= analysis_start_date and peak_date <= current_date:
+                    # 确保这个高点之前没有被分析过
+                    if peak.time not in analyzed_peak_times:
+                        current_significant_peaks.append(peak)
+            
+            # 如果当前区间内没有显著高点，结束迭代
+            if not current_significant_peaks:
+                print(f"当前区间内没有找到显著高点，结束迭代")
+                break
+            
+            # 按时间排序当前区间内的高点
+            current_significant_peaks.sort(key=lambda p: pd.to_datetime(p.time))
+            
+            # 找出当前区间内的最高点作为原始历史最高点
+            original_peak = max(current_significant_peaks, key=lambda p: p.price)
+            original_peak_time = original_peak.time
+            original_peak_price = original_peak.price
+            original_peak_date = pd.to_datetime(original_peak_time)
+            
+            # 标记这个高点已经被分析
+            analyzed_peak_times.add(original_peak_time)
+            
+            # 定义在历史最高点前后一年的时间窗口
+            window_start = original_peak_date - timedelta(days=365)
+            window_end = original_peak_date + timedelta(days=365)
+            
+            print(f"原始历史最高点: {original_peak_time} - ¥{original_peak_price:.2f}")
+            print(f"高点时间窗口: {window_start.strftime('%Y-%m-%d')} 至 {window_end.strftime('%Y-%m-%d')}")
+            
+            # 在时间窗口内查找更合适的时间点
+            window_peaks = []
+            for peak in current_significant_peaks:
+                peak_date = pd.to_datetime(peak.time)
+                # 排除原始历史最高点本身
+                if peak.time != original_peak_time and window_start <= peak_date <= window_end:
+                    window_peaks.append(peak)
+                    print(f"  窗口内显著高点: {peak.time} - ¥{peak.price:.2f}")
+            
+            # 选择最终的历史最高点时间
+            peak_time = original_peak_time
+            if window_peaks:
+                # 计算每个高点与原始最高点的时间差
+                closest_peak = min(window_peaks, 
+                                   key=lambda p: abs(pd.to_datetime(p.time) - original_peak_date))
+                peak_time = closest_peak.time
+                print(f"选择时间上最近的高点作为时间参考: {peak_time}")
+            else:
+                print(f"窗口内无其他显著高点，使用原始历史最高点时间: {peak_time}")
+            
+            # 保持原始历史最高点的价格
+            peak_price = original_peak_price
+            
+            # 计算预测低点和时间窗口
+            predicted_low = peak_price * self.prediction_threshold
+            peak_date = pd.to_datetime(peak_time)
+            time_window_end = peak_date + timedelta(days=self.prediction_window_years * 365)
+            
+            print(f"最终选定的历史最高点: 时间={peak_time}，价格=¥{peak_price:.2f}")
+            print(f"预测低点: ¥{predicted_low:.2f}")
+            print(f"预测时间窗口结束: {time_window_end.strftime('%Y-%m-%d')}")
+            
+            # 在历史最高点之后寻找实际低点
+            actual_low = self._find_actual_low(current_df, peak_date, predicted_low)
+            
+            if actual_low is None:
+                # 如果没有找到实际低点，创建结果并结束迭代
+                result = Stage1Result(
+                    historical_peak=(peak_time, peak_price),
+                    predicted_low=predicted_low,
+                    time_window_end=time_window_end,
+                    actual_low=None,
+                    is_early=False,
+                    status="不满足条件"
+                )
+                results.append(result)
+                break
+            
+            # 判断是否提前出现
+            actual_low_date = pd.to_datetime(actual_low[0])
+            is_early = actual_low_date < time_window_end
+            
+            # 创建结果
+            result = Stage1Result(
+                historical_peak=(peak_time, peak_price),
+                predicted_low=predicted_low,
+                time_window_end=time_window_end,
+                actual_low=actual_low,
+                is_early=is_early,
+                status="提前出现" if is_early else "符合标准"
+            )
+            
+            # 将结果添加到列表
+            results.append(result)
+            
+            # 检查是否继续迭代
+            # 如果已经到达或接近当前日期，就结束迭代
+            if actual_low_date >= current_date - timedelta(days=30):
+                print(f"实际低点接近当前日期，结束迭代")
+                break
+            
+            # 更新分析起始日期为实际低点日期
+            analysis_start_date = actual_low_date
+            
+            # 递增迭代计数
+            iteration += 1
+        
+        return results
+    
+    def _analyze_stage2(self, df: pd.DataFrame, stage1_result: Stage1Result) -> Stage2Result:
+        """
+        Stage 2: 低点的回调与新低点预测
+        """
+        if not stage1_result.actual_low:
+            return None
+        
+        # 获取第一低点信息
+        first_low_time, first_low_price = stage1_result.actual_low
+        first_low_date = pd.to_datetime(first_low_time)
+        
+        # 确保trade_date列是datetime类型
+        df = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df['trade_date']):
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        # 在第一低点之后的数据中寻找回调
+        mask = df['trade_date'] > first_low_date
+        post_low_data = df[mask]
+        
+        if post_low_data.empty:
+            return Stage2Result(
+                has_rebound=False,
+                rebound_price=None,
+                predicted_second_low=None
+            )
+        
+        # 计算相对于第一低点的涨幅
+        price_increases = (post_low_data['close'] - first_low_price) / first_low_price
+        
+        # 检查是否有超过70%的回调
+        has_rebound = (price_increases > self.rebound_threshold).any()
+        
+        if not has_rebound:
+            return Stage2Result(
+                has_rebound=False,
+                rebound_price=None,
+                predicted_second_low=None
+            )
+        
+        # 获取回调价格（取第一次超过70%时的价格）
+        rebound_idx = price_increases[price_increases > self.rebound_threshold].index[0]
+        rebound_price = post_low_data.loc[rebound_idx, 'close']
+        
+        # 预测第二低点
+        predicted_second_low = rebound_price * self.prediction_threshold
+        
+        return Stage2Result(
+            has_rebound=True,
+            rebound_price=rebound_price,
+            predicted_second_low=predicted_second_low
+        )
+    
+    def _find_actual_low(self, df: pd.DataFrame, 
+                        start_date: datetime, 
+                        threshold: float) -> Optional[Tuple[str, float]]:
+        """
+        在指定日期start_date之后，寻找第一次价格达到预测低点threshold的点
+        
+        Args:
+            df: 股票数据DataFrame
+            start_date: 开始日期
+            threshold: 预测低点价格
+            
+        Returns:
+            Optional[Tuple[str, float]]: (时间, 预测低点价格)，如果未找到则返回None
+            - 时间是第一次价格达到预测低点的日期
+            - 价格统一使用预测低点价格，而不是实际交易价格
+        """
+        # 确保trade_date列是datetime类型
+        df = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df['trade_date']):
+            df['trade_date'] = pd.to_datetime(df['trade_date'], format='%Y%m%d')
+        
+        # 筛选开始日期之后的数据
+        mask = df['trade_date'] > start_date
+        post_data = df[mask].copy()
+        
+        if post_data.empty:
+            print("未找到开始日期之后的数据")
+            return None
+        
+        # 确保价格是浮点型
+        post_data = post_data.copy()
+        post_data['close'] = post_data['close'].astype(float)
+        
+        print(f"\n调试信息 - 查找达到预测低点的时间点")
+        print(f"预测低点价格: {threshold}")
+        
+        # 按时间排序
+        post_data = post_data.sort_values('trade_date')
+        
+        # 计算每个点与预测低点的差距
+        post_data['diff'] = post_data['close'] - threshold
+        
+        # 保存原始日期格式，以便返回
+        post_data['date_str'] = post_data['trade_date'].dt.strftime('%Y%m%d')
+        
+        # 策略：找第一个满足以下条件之一的点
+        # 1. 价格刚好等于预测低点（diff = 0）
+        # 2. 价格刚好小于预测低点（diff < 0），且前一个点的价格大于预测低点（前一个点的diff > 0）
+        
+        # 先找到差距变号的点（从大于预测低点变为小于预测低点）
+        potential_points = []
+        
+        for i in range(1, len(post_data)):
+            prev_diff = post_data.iloc[i-1]['diff']
+            curr_diff = post_data.iloc[i]['diff']
+            
+            # 如果前一个点高于预测低点，当前点低于或等于预测低点
+            if prev_diff > 0 and curr_diff <= 0:
+                row = post_data.iloc[i]
+                date_str = row['date_str']
+                # 使用预测低点价格而不是实际价格
+                potential_points.append((date_str, threshold))
+                print(f"找到交叉点: {row['trade_date']} - 实际价格: {row['close']}, 使用预测价格: {threshold}")
+                # 找到第一个符合条件的点后就跳出循环
+                break
+        
+        if potential_points:
+            # 返回第一个交叉点，使用预测低点价格
+            date_str, price = potential_points[0]
+            print(f"选择第一个交叉点: {date_str} - 使用预测价格: {price}")
+            return (date_str, price)
+        
+        # 如果没有找到交叉点，查找是否有点刚好等于预测低点
+        equal_points = post_data[post_data['diff'].abs() < 0.001]  # 使用非常小的容差找等于点
+        if not equal_points.empty:
+            row = equal_points.iloc[0]
+            date_str = row['date_str']
+            # 使用预测低点价格
+            print(f"找到刚好等于预测低点的点: {row['trade_date']} - 实际价格: {row['close']}, 使用预测价格: {threshold}")
+            return (date_str, threshold)
+        
+        # 如果没有等于预测低点的点，尝试找最接近的
+        # 我们要找与预测低点相差不超过5%的点
+        tolerance = threshold * 0.05  # 容差范围
+        
+        # 标记差距小于5%的点
+        close_points = post_data[post_data['diff'].abs() <= tolerance]
+        
+        if not close_points.empty:
+            row = close_points.iloc[0]  # 按时间顺序取第一个
+            date_str = row['date_str']
+            # 使用预测低点价格
+            print(f"找到接近预测低点的点(容差{tolerance}): {row['trade_date']} - 实际价格: {row['close']}, 使用预测价格: {threshold}")
+            return (date_str, threshold)
+        
+        print("未找到符合条件的点")
+        return None
+
+    def visualize(self, df: pd.DataFrame, result: Dict[str, Any], stock_code: str, show: bool = True):
+        """
+        可视化分析结果
+        
+        Args:
+            df: 股票数据DataFrame
+            result: 分析结果字典
+            stock_code: 股票代码
+            show: 是否显示图表，默认为True
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.dates import YearLocator, DateFormatter, MonthLocator
+        from dateutil.relativedelta import relativedelta
+        import matplotlib.patches as patches
+        from matplotlib.gridspec import GridSpec
+        import numpy as np
+        import matplotlib.ticker as mticker
+        
+        # 设置风格和字体
+        plt.style.use('ggplot')
+        plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']  # 设置字体
+        plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+        plt.rcParams['figure.facecolor'] = 'white'
+        plt.rcParams['axes.facecolor'] = '#f8f9fa'
+        plt.rcParams['axes.edgecolor'] = '#cccccc'
+        plt.rcParams['axes.grid'] = True
+        plt.rcParams['grid.alpha'] = 0.3
+        plt.rcParams['grid.color'] = '#cccccc'
+        plt.rcParams['axes.spines.top'] = False
+        plt.rcParams['axes.spines.right'] = False
+        plt.rcParams['axes.labelweight'] = 'bold'
+        plt.rcParams['axes.titleweight'] = 'bold'
+        
+        # 创建一个更大的图表，并使用GridSpec来管理子图布局
+        fig = plt.figure(figsize=(16, 10))
+        gs = GridSpec(2, 1, height_ratios=[5, 1], hspace=0.05)
+        
+        # 主价格图
+        ax_price = fig.add_subplot(gs[0])
+        # 分析阶段指示图
+        ax_phase = fig.add_subplot(gs[1], sharex=ax_price)
+        
+        # 确保日期列是datetime类型用于绘图
+        df = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df['trade_date']):
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        # 获取所有Stage 1结果和Stage 2结果
+        stage1_results = result['stage1_results']
+        stage2_results = result['stage2_results']
+        
+        # 定义专业的金融图表配色方案
+        colors = ['#d91e1e', '#1a7bb5', '#138a36', '#a31cad', '#fd7e14', '#17a2b8', '#e83e8c', '#6c757d']
+        peak_markers = ['^', '^', '^', '^', '^', '^', '^', '^']  # 统一使用上三角为高点
+        low_markers = ['v', 'v', 'v', 'v', 'v', 'v', 'v', 'v']   # 统一使用下三角为低点
+        rebound_markers = ['*', '*', '*', '*', '*', '*', '*', '*']  # 统一使用星形为回调点
+        
+        # 绘制原始价格
+        dates = df['trade_date']
+        ax_price.plot(dates, df['close'], color='#2c3e50', linewidth=1.5, label='价格')
+        
+        # 设置更好的价格格式化
+        def price_formatter(x, pos):
+            return f"¥{x:.0f}" if x >= 100 else f"¥{x:.2f}"
+        ax_price.yaxis.set_major_formatter(mticker.FuncFormatter(price_formatter))
+        
+        # 在分析阶段指示图中创建区域
+        phase_colors = ['#f8f9fa', '#e2f0f9', '#e6f5eb', '#f5e8f7']  # 不同阶段的颜色，更柔和
+        phase_labels = []  # 存储每个阶段的标签，用于图例
+        
+        # 计算Y轴的最小最大值，用于后续绘图
+        min_price = df['close'].min() * 0.9  # 留出10%的空间
+        max_price = df['close'].max() * 1.1
+        
+        # 高亮显示分析区间（2012年至今）- 遵循设计文档
+        analysis_start = pd.to_datetime(self.analysis_start_date)
+        analysis_end = dates.max()
+        ax_price.axvspan(analysis_start, analysis_end, color='#f0f8ff', alpha=0.3, zorder=0, label='分析区间')
+        
+        # 绘制整个图表的背景交替带，突显年份区域
+        years = pd.DatetimeIndex(dates).year.unique()
+        for i, year in enumerate(years):
+            year_start = pd.Timestamp(f"{year}-01-01")
+            year_end = pd.Timestamp(f"{year}-12-31") if year < years[-1] else dates.max()
+            if i % 2 == 0:  # 偶数年添加浅色背景
+                ax_price.axvspan(year_start, year_end, color='#f8f9fa', alpha=0.3, zorder=0)
+                
+        # 遍历所有Stage 1结果进行绘制
+        for i, stage1 in enumerate(stage1_results):
+            color_idx = i % len(colors)
+            color = colors[color_idx]
+            peak_marker = peak_markers[color_idx]
+            low_marker = low_markers[color_idx]
+            rebound_marker = rebound_markers[color_idx]
+            phase_color = phase_colors[i % len(phase_colors)]
+            
+            # 获取阶段起止时间
+            peak_date = pd.to_datetime(stage1.historical_peak[0], format='%Y%m%d')
+            
+            # 为该分析阶段创建背景区域
+            if i < len(stage1_results) - 1:
+                next_peak_date = pd.to_datetime(stage1_results[i+1].historical_peak[0], format='%Y%m%d')
+                rect = patches.Rectangle((peak_date, 0), next_peak_date - peak_date, 1, 
+                                        facecolor=phase_color, alpha=0.8, transform=ax_phase.get_xaxis_transform(),
+                                        edgecolor='#cccccc', linewidth=0.5)
+                ax_phase.add_patch(rect)
+                ax_phase.text(peak_date + (next_peak_date - peak_date)/2, 0.5, f"周期 {i+1}", 
+                             ha='center', va='center', fontweight='bold', fontsize=10, 
+                             transform=ax_phase.get_xaxis_transform())
+                phase_labels.append(patches.Patch(facecolor=phase_color, alpha=0.8, edgecolor='#cccccc', 
+                                                label=f'周期 {i+1}'))
+            else:
+                # 最后一个阶段延伸到图表结束
+                rect = patches.Rectangle((peak_date, 0), dates.max() - peak_date, 1, 
+                                        facecolor=phase_color, alpha=0.8, transform=ax_phase.get_xaxis_transform(),
+                                        edgecolor='#cccccc', linewidth=0.5)
+                ax_phase.add_patch(rect)
+                ax_phase.text(peak_date + (dates.max() - peak_date)/2, 0.5, f"周期 {i+1}", 
+                             ha='center', va='center', fontweight='bold', fontsize=10, 
+                             transform=ax_phase.get_xaxis_transform())
+                phase_labels.append(patches.Patch(facecolor=phase_color, alpha=0.8, edgecolor='#cccccc',
+                                                label=f'周期 {i+1}'))
+            
+            # 绘制历史高点的85%阈值线 - 根据设计文档添加
+            threshold_value = stage1.historical_peak[1] * self.price_threshold
+            ax_price.plot([peak_date - relativedelta(years=1), peak_date + relativedelta(years=1)], 
+                         [threshold_value, threshold_value], 
+                         color=color, linestyle=':', alpha=0.7, linewidth=1.5,
+                         label=f'85%阈值 {i+1}: ¥{threshold_value:.2f}')
+            
+            # 绘制历史高点区域（前后1年的时间窗口）
+            peak_highlight_start = peak_date - relativedelta(years=1)
+            peak_highlight_end = peak_date + relativedelta(years=1)
+            ax_price.axvspan(peak_highlight_start, peak_highlight_end, 
+                           alpha=0.1, color=color, edgecolor=None, zorder=1)
+            
+            # 绘制历史最高点
+            ax_price.scatter([peak_date], [stage1.historical_peak[1]], 
+                           c=color, s=150, marker=peak_marker, edgecolors='white', linewidth=1.5, zorder=10,
+                           label=f'高点 {i+1}: ¥{stage1.historical_peak[1]:.2f}')
+            
+            # 添加高点注释 - 简化以提高可读性
+            label_text = f'高点 {i+1}\n¥{stage1.historical_peak[1]:.2f}'
+            ax_price.annotate(label_text, 
+                            xy=(peak_date, stage1.historical_peak[1]),
+                            xytext=(0, 20),
+                            textcoords='offset points',
+                            ha='center',
+                            arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0", color=color),
+                            bbox=dict(boxstyle="round,pad=0.3", fc='white', ec=color, alpha=0.85))
+            
+            # 绘制预测时间窗口 - 根据设计文档更明确地标注
+            prediction_window_end = peak_date + relativedelta(years=int(self.prediction_window_years), 
+                                                            months=int((self.prediction_window_years % 1) * 12))
+            ax_price.axvspan(peak_date, prediction_window_end, 
+                           alpha=0.05, color=color, edgecolor=color, linestyle='--',
+                           zorder=1, label=f'预测窗口 {i+1}')
+            
+            # 绘制预测低点线（使用虚线）
+            ax_price.plot([peak_date, stage1.time_window_end], 
+                         [stage1.predicted_low, stage1.predicted_low], 
+                         color=color, linestyle='--', alpha=0.7, linewidth=2,
+                         label=f'预测低点 {i+1}: ¥{stage1.predicted_low:.2f}')
+            
+            # 为预测低点添加简洁标签
+            # 位置向右移动一些以避免与其他标签重叠
+            ax_price.text(peak_date + (stage1.time_window_end - peak_date)/4, 
+                        stage1.predicted_low, 
+                        f'预测低点: ¥{stage1.predicted_low:.2f}',
+                        ha='left', va='bottom', fontsize=9, color=color,
+                        bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=color, alpha=0.85))
+            
+            # 绘制时间窗口结束线
+            ax_price.axvline(x=stage1.time_window_end, color=color, linestyle=':', linewidth=1.2,
+                           alpha=0.6, label=f'窗口结束 {i+1}')
+            
+            # 添加简化的窗口结束注释
+            window_end_text = f'窗口 {i+1}\n{stage1.time_window_end.strftime("%Y/%m")}'
+            ax_price.text(stage1.time_window_end, min_price, window_end_text,
+                        rotation=90, ha='center', va='bottom', fontsize=8, color=color)
+            
+            # 绘制实际低点（如果存在）
+            if stage1.actual_low:
+                actual_low_date = pd.to_datetime(stage1.actual_low[0], format='%Y%m%d')
+                actual_low_price = stage1.actual_low[1]
+                
+                # 绘制高点到实际低点的下降趋势线
+                ax_price.plot([peak_date, actual_low_date], 
+                             [stage1.historical_peak[1], actual_low_price], 
+                             color=color, linestyle='-', alpha=0.4, linewidth=1.5, zorder=2)
+                
+                ax_price.scatter([actual_low_date], [actual_low_price], 
+                               c=color, s=150, marker=low_marker, edgecolors='white', linewidth=1.5, zorder=10,
+                               label=f'实际低点 {i+1}: ¥{actual_low_price:.2f}')
+                
+                # 添加简化的实际低点注释
+                status_text = "提前出现" if stage1.is_early else "符合标准"
+                drop_pct = ((stage1.historical_peak[1] - actual_low_price) / stage1.historical_peak[1]) * 100
+                days = (actual_low_date - peak_date).days
+                
+                low_label = f'低点 {i+1}\n¥{actual_low_price:.2f}\n↓{drop_pct:.1f}%'
+                ax_price.annotate(low_label, 
+                                xy=(actual_low_date, actual_low_price),
+                                xytext=(0, -25),
+                                textcoords='offset points',
+                                ha='center',
+                                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0", color=color),
+                                bbox=dict(boxstyle="round,pad=0.3", fc='white', ec=color, alpha=0.85))
+                
+                # 在折线下方显示天数
+                midpoint_date = peak_date + (actual_low_date - peak_date) / 2
+                midpoint_price = (stage1.historical_peak[1] + actual_low_price) / 2 - (stage1.historical_peak[1] - actual_low_price) * 0.1
+                ax_price.text(midpoint_date, midpoint_price, f"{days}天", 
+                             ha='center', va='top', color=color, fontsize=8, 
+                             bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=color, alpha=0.7))
+                
+                # 绘制Stage 2结果（如果存在）
+                if i < len(stage2_results) and stage2_results[i] and stage2_results[i].has_rebound:
+                    stage2 = stage2_results[i]
+                    
+                    # 找到回调价格对应的日期点
+                    mask = df['close'] >= stage2.rebound_price
+                    if mask.any():
+                        # 获取第一次超过回调价格的日期
+                        rebound_mask = (df['trade_date'] > actual_low_date) & mask
+                        if rebound_mask.any():
+                            rebound_date = df.loc[rebound_mask, 'trade_date'].iloc[0]
+                            
+                            # 绘制低点到回调点的上升趋势线
+                            ax_price.plot([actual_low_date, rebound_date], 
+                                         [actual_low_price, stage2.rebound_price], 
+                                         color=color, linestyle='-', alpha=0.4, linewidth=1.5, zorder=2)
+                            
+                            ax_price.scatter([rebound_date], [stage2.rebound_price], 
+                                           c=color, s=150, marker=rebound_marker, edgecolors='white', linewidth=1.5, zorder=10,
+                                           label=f'回调 {i+1}: ¥{stage2.rebound_price:.2f}')
+                            
+                            # 添加回调阈值标注 - 根据设计文档
+                            rebound_threshold_value = actual_low_price * (1 + self.rebound_threshold)
+                            ax_price.plot([actual_low_date, rebound_date + relativedelta(months=3)], 
+                                         [rebound_threshold_value, rebound_threshold_value], 
+                                         color=color, linestyle=':', alpha=0.5, linewidth=1,
+                                         label=f'回调阈值 {i+1}: ¥{rebound_threshold_value:.2f}')
+                            ax_price.text(actual_low_date + relativedelta(months=1), 
+                                        rebound_threshold_value, 
+                                        f'回调阈值: +{self.rebound_threshold*100:.0f}%',
+                                        ha='left', va='bottom', fontsize=8, color=color,
+                                        bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=color, alpha=0.7))
+                            
+                            # 绘制预测第二低点线
+                            ax_price.plot([rebound_date, rebound_date + relativedelta(years=3)], 
+                                         [stage2.predicted_second_low, stage2.predicted_second_low], 
+                                         color=color, linestyle='-.', alpha=0.6, linewidth=1.5,
+                                         label=f'预测第二低点 {i+1}: ¥{stage2.predicted_second_low:.2f}')
+                            
+                            # 为预测第二低点简化标签
+                            ax_price.text(rebound_date + relativedelta(months=3), 
+                                        stage2.predicted_second_low, 
+                                        f'第二低点: ¥{stage2.predicted_second_low:.2f}',
+                                        ha='left', va='bottom', fontsize=8, color=color,
+                                        bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=color, alpha=0.7))
+                            
+                            # 添加简化的回调价格注释
+                            rebound_pct = ((stage2.rebound_price - actual_low_price) / actual_low_price) * 100
+                            rebound_days = (rebound_date - actual_low_date).days
+                            
+                            rebound_label = f'回调 {i+1}\n¥{stage2.rebound_price:.2f}\n↑{rebound_pct:.1f}%'
+                            ax_price.annotate(rebound_label, 
+                                            xy=(rebound_date, stage2.rebound_price),
+                                            xytext=(0, 20),
+                                            textcoords='offset points',
+                                            ha='center',
+                                            arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0", color=color),
+                                            bbox=dict(boxstyle="round,pad=0.3", fc='white', ec=color, alpha=0.85))
+                            
+                            # 在折线下方显示天数
+                            midpoint_date = actual_low_date + (rebound_date - actual_low_date) / 2
+                            midpoint_price = (actual_low_price + stage2.rebound_price) / 2 - (stage2.rebound_price - actual_low_price) * 0.1
+                            ax_price.text(midpoint_date, midpoint_price, f"{rebound_days}天", 
+                                        ha='center', va='top', color=color, fontsize=8, 
+                                        bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=color, alpha=0.7))
+        
+        # 设置主价格图的标题和标签
+        title = f'股票迭代分析结果 ({stock_code})'
+        if len(stage1_results) > 0:
+            title += f' - 共{len(stage1_results)}轮分析'
+        ax_price.set_title(title, fontsize=16, fontweight='bold', pad=15)
+        ax_price.set_ylabel('价格 (元)', fontsize=12, fontweight='bold')
+        ax_price.yaxis.set_label_coords(-0.01, 0.5)  # 调整y轴标签位置
+        
+        # 设置分析阶段指示图的标签
+        ax_phase.set_yticks([])
+        ax_phase.set_xlabel('日期', fontsize=12, fontweight='bold')
+        ax_phase.set_ylabel('分析阶段', fontsize=10)
+        ax_phase.set_ylim(0, 1)
+        ax_phase.set_frame_on(True)
+        ax_phase.spines['top'].set_visible(False)
+        ax_phase.spines['right'].set_visible(False)
+        
+        # 设置合适的Y轴范围
+        ax_price.set_ylim(min_price, max_price)
+        
+        # 设置更好的网格线
+        ax_price.grid(True, which='major', axis='both', linestyle='-', alpha=0.2)
+        ax_price.grid(True, which='minor', axis='both', linestyle=':', alpha=0.1)
+        
+        # 设置时间轴，大刻度为年，小刻度为季度
+        ax_price.xaxis.set_major_locator(YearLocator())
+        ax_price.xaxis.set_major_formatter(DateFormatter('%Y'))
+        ax_price.xaxis.set_minor_locator(MonthLocator(bymonth=[1, 4, 7, 10]))
+        
+        # 处理图例
+        # 合并主图和阶段图的图例
+        handles, labels = ax_price.get_legend_handles_labels()
+        
+        # 由于标记太多，可能需要过滤一下图例内容，只保留每个阶段的高点和低点
+        filtered_handles = []
+        filtered_labels = []
+        
+        # 添加价格线的图例
+        filtered_handles.append(handles[0])
+        filtered_labels.append(labels[0])
+        
+        # 添加分析区间的图例
+        try:
+            analysis_idx = labels.index('分析区间')
+            filtered_handles.append(handles[analysis_idx])
+            filtered_labels.append('分析区间')
+        except ValueError:
+            pass
+        
+        # 为每个阶段添加高点和低点的图例
+        for i in range(len(stage1_results)):
+            # 添加高点
+            peak_idx = labels.index(f'高点 {i+1}: ¥{stage1_results[i].historical_peak[1]:.2f}')
+            filtered_handles.append(handles[peak_idx])
+            filtered_labels.append(f'高点 {i+1}')
+            
+            # 添加预测低点
+            pred_low_idx = labels.index(f'预测低点 {i+1}: ¥{stage1_results[i].predicted_low:.2f}')
+            filtered_handles.append(handles[pred_low_idx])
+            filtered_labels.append(f'预测低点 {i+1}')
+            
+            # 添加实际低点（如果存在）
+            if stage1_results[i].actual_low:
+                low_idx = labels.index(f'实际低点 {i+1}: ¥{stage1_results[i].actual_low[1]:.2f}')
+                filtered_handles.append(handles[low_idx])
+                filtered_labels.append(f'实际低点 {i+1}')
+        
+        # 添加分析阶段的图例
+        filtered_handles.extend(phase_labels)
+        filtered_labels.extend([f'周期 {i+1}' for i in range(len(phase_labels))])
+        
+        # 添加图例，使用两列以节省空间
+        legend = ax_price.legend(filtered_handles, filtered_labels, 
+                                loc='upper left', fontsize=9, 
+                                framealpha=0.95, fancybox=True, shadow=True, ncol=2)
+        legend.get_frame().set_edgecolor('#cccccc')
+        
+        # 直接调整子图位置，避免使用tight_layout
+        plt.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.12, hspace=0.05)
+        
+        # 添加参考日期线 - 当前日期
+        current_date = pd.to_datetime(datetime.now())
+        if current_date > dates.min() and current_date < dates.max():
+            ax_price.axvline(current_date, color='#6c757d', linestyle='-', linewidth=1, alpha=0.7)
+            ax_price.text(current_date, max_price*0.99, '当前', 
+                         ha='right', va='top', color='#6c757d', fontsize=8, 
+                         bbox=dict(boxstyle="round,pad=0.1", fc='white', ec='#6c757d', alpha=0.8))
+        
+        # 添加图表脚注
+        plt.figtext(0.5, 0.02, 
+                   f"分析日期: {datetime.now().strftime('%Y-%m-%d')} | 数据范围: {df['trade_date'].min().strftime('%Y-%m-%d')} - {df['trade_date'].max().strftime('%Y-%m-%d')}", 
+                   ha="center", fontsize=9, style='italic')
+        
+        plt.figtext(0.99, 0.02, 
+                   "基于历史高点和低点的迭代分析", 
+                   ha="right", fontsize=9, style='italic')
+        
+        # 创建水印
+        fig.text(0.5, 0.5, '股票筛选分析', 
+                fontsize=60, color='#f0f0f0',
+                ha='center', va='center', alpha=0.1, 
+                rotation=30, transform=ax_price.transAxes)
+        
+        if show:
+            plt.show()
+            
+        return fig  # 返回图表对象，以便可能的进一步处理或保存
+
+if __name__ == "__main__":
+    # 示例：分析茅台股票数据
+    from src.data import StockInfoFetcher, Period
+    import os
+    
+    # 创建股票数据获取器
+    stock_code = '600519.SH'  # 茅台股票代码
+    fetcher = StockInfoFetcher(stock_code)
+    
+    # 获取股票数据（从2010年到现在）
+    start_date = '20100101'
+    end_date = datetime.now().strftime('%Y%m%d')  # 动态获取当前日期
+    df = fetcher.get_kline_data(Period.WEEKLY, start_date, end_date)
+    
+    # 创建股票筛选器
+    filter = StockFilter()
+    
+    # 分析股票
+    result = filter.analyze_stock(df)
+    
+    # 打印分析结果
+    stage1_results = result['stage1_results']
+    stage2_results = result['stage2_results']
+    
+    print(f"\n=== 分析完成，共{len(stage1_results)}轮迭代 ===")
+    
+    for i, (stage1, stage2) in enumerate(zip(stage1_results, stage2_results)):
+        print(f"\n--- 第{i+1}轮分析 ---")
+        
+        # 打印Stage 1结果
+        print(f"历史最高点: {stage1.historical_peak[0]} - ¥{stage1.historical_peak[1]:.2f}")
+        print(f"预测低点: ¥{stage1.predicted_low:.2f}")
+        print(f"时间窗口结束: {stage1.time_window_end.strftime('%Y-%m-%d')}")
+        
+        if stage1.actual_low:
+            print(f"实际低点: {stage1.actual_low[0]} - ¥{stage1.actual_low[1]:.2f}")
+            print(f"是否提前出现: {'是' if stage1.is_early else '否'}")
+        else:
+            print("未找到实际低点")
+        
+        print(f"分析状态: {stage1.status}")
+        
+        # 打印Stage 2结果
+        if stage2:
+            print(f"是否出现回调: {'是' if stage2.has_rebound else '否'}")
+            
+            if stage2.has_rebound:
+                print(f"回调价格: ¥{stage2.rebound_price:.2f}")
+                print(f"预测第二低点: ¥{stage2.predicted_second_low:.2f}")
+        else:
+            print("跳过Stage 2分析")
+    
+    # 可视化分析结果
+    fig = filter.visualize(df, result, stock_code)
+    
+    # 保存图表
+    output_dir = 'output'
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    output_file = os.path.join(output_dir, f'{stock_code}_analysis.png')
+    fig.savefig(output_file, dpi=200, bbox_inches='tight')
+    print(f"\n图表已保存到 {output_file}")
+    
