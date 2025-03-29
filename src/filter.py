@@ -479,14 +479,11 @@ class StockFilter:
         plt.rcParams['axes.labelweight'] = 'bold'
         plt.rcParams['axes.titleweight'] = 'bold'
         
-        # 创建一个更大的图表，并使用GridSpec来管理子图布局
+        # 创建一个更大的图表
         fig = plt.figure(figsize=(16, 10))
-        gs = GridSpec(2, 1, height_ratios=[5, 1], hspace=0.05)
         
-        # 主价格图
-        ax_price = fig.add_subplot(gs[0])
-        # 分析阶段指示图
-        ax_phase = fig.add_subplot(gs[1], sharex=ax_price)
+        # 创建主价格图，不再分割为两部分
+        ax_price = fig.add_subplot(111)
         
         # 确保日期列是datetime类型用于绘图
         df = df.copy()
@@ -531,7 +528,8 @@ class StockFilter:
         # 高亮显示分析区间（2012年至今）- 遵循设计文档
         analysis_start = pd.to_datetime(self.analysis_start_date)
         analysis_end = dates.max()
-        ax_price.axvspan(analysis_start, analysis_end, color='#f0f8ff', alpha=0.2, zorder=0, label='分析区间')
+        # 确保只显示2012年至今的分析区间，即使数据从2010年开始
+        ax_price.axvspan(analysis_start, analysis_end, color='#f0f8ff', alpha=0.2, zorder=0, label='分析区间(2012至今)')
         
         # 绘制整个图表的背景交替带，突显年份区域
         years = pd.DatetimeIndex(dates).year.unique()
@@ -573,26 +571,21 @@ class StockFilter:
             # 为该分析阶段创建背景区域
             if i < len(stage1_results) - 1:
                 next_peak_date = pd.to_datetime(stage1_results[i+1].historical_peak[0], format='%Y%m%d')
-                rect = patches.Rectangle((peak_date, 0), next_peak_date - peak_date, 1, 
-                                        facecolor=phase_color, alpha=0.8, transform=ax_phase.get_xaxis_transform(),
-                                        edgecolor='#cccccc', linewidth=0.5)
-                ax_phase.add_patch(rect)
-                ax_phase.text(peak_date + (next_peak_date - peak_date)/2, 0.5, f"周期 {i+1}", 
-                             ha='center', va='center', fontweight='bold', fontsize=10, 
-                             transform=ax_phase.get_xaxis_transform())
-                phase_labels.append(patches.Patch(facecolor=phase_color, alpha=0.8, edgecolor='#cccccc', 
-                                                label=f'周期 {i+1}'))
+                # 在主图添加淡色背景表示分析周期
+                ax_price.axvspan(peak_date, next_peak_date, 
+                               color=phase_color, alpha=0.05, zorder=0)
+                # 添加文本标记周期
+                ax_price.text(peak_date + (next_peak_date - peak_date)/2, max_price*0.98, f"周期 {i+1}", 
+                            ha='center', va='top', fontsize=9, alpha=0.7,
+                            bbox=dict(boxstyle="round,pad=0.1", fc=phase_color, ec='none', alpha=0.3))
             else:
                 # 最后一个阶段延伸到图表结束
-                rect = patches.Rectangle((peak_date, 0), dates.max() - peak_date, 1, 
-                                        facecolor=phase_color, alpha=0.8, transform=ax_phase.get_xaxis_transform(),
-                                        edgecolor='#cccccc', linewidth=0.5)
-                ax_phase.add_patch(rect)
-                ax_phase.text(peak_date + (dates.max() - peak_date)/2, 0.5, f"周期 {i+1}", 
-                             ha='center', va='center', fontweight='bold', fontsize=10, 
-                             transform=ax_phase.get_xaxis_transform())
-                phase_labels.append(patches.Patch(facecolor=phase_color, alpha=0.8, edgecolor='#cccccc',
-                                                label=f'周期 {i+1}'))
+                ax_price.axvspan(peak_date, dates.max(), 
+                               color=phase_color, alpha=0.05, zorder=0)
+                # 添加文本标记周期
+                ax_price.text(peak_date + (dates.max() - peak_date)/2, max_price*0.98, f"周期 {i+1}", 
+                            ha='center', va='top', fontsize=9, alpha=0.7,
+                            bbox=dict(boxstyle="round,pad=0.1", fc=phase_color, ec='none', alpha=0.3))
             
             # 绘制历史高点的85%阈值线
             threshold_value = stage1.historical_peak[1] * self.price_threshold
@@ -762,14 +755,8 @@ class StockFilter:
         ax_price.set_ylabel('价格 (元)', fontsize=12, fontweight='bold')
         ax_price.yaxis.set_label_coords(-0.01, 0.5)  # 调整y轴标签位置
         
-        # 设置分析阶段指示图的标签
-        ax_phase.set_yticks([])
-        ax_phase.set_xlabel('日期', fontsize=12, fontweight='bold')
-        ax_phase.set_ylabel('分析阶段', fontsize=10)
-        ax_phase.set_ylim(0, 1)
-        ax_phase.set_frame_on(True)
-        ax_phase.spines['top'].set_visible(False)
-        ax_phase.spines['right'].set_visible(False)
+        # 设置X轴标签
+        ax_price.set_xlabel('日期', fontsize=12, fontweight='bold')
         
         # 设置合适的Y轴范围
         ax_price.set_ylim(min_price, max_price)
@@ -783,15 +770,15 @@ class StockFilter:
         ax_price.xaxis.set_major_formatter(DateFormatter('%Y'))
         ax_price.xaxis.set_minor_locator(MonthLocator(bymonth=[1, 4, 7, 10]))
         
-        # 添加图例
+        # 添加图例，不再包含周期标签
         handles, labels = ax_price.get_legend_handles_labels()
         legend = ax_price.legend(handles, labels, 
-                                loc='upper left', fontsize=9, 
-                                framealpha=0.95, fancybox=True, shadow=True)
+                         loc='upper left', fontsize=9, 
+                         framealpha=0.95, fancybox=True, shadow=True)
         legend.get_frame().set_edgecolor('#cccccc')
         
         # 直接调整子图位置，避免使用tight_layout
-        plt.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.12, hspace=0.05)
+        plt.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.12)
         
         # 添加参考日期线 - 当前日期
         current_date = pd.to_datetime(datetime.now())
@@ -817,7 +804,7 @@ class StockFilter:
         
         # 显示图表
         if show:
-            plt.tight_layout()
+            # 不使用tight_layout()，因为已经手动调整了边距
             plt.show()
             
         return fig  # 返回图表对象，以便可能的进一步处理或保存
