@@ -614,7 +614,7 @@ class StockFilter:
             
             # 绘制时间窗口结束线
             ax_price.axvline(x=stage1.time_window_end, color=historical_high_color, linestyle=':', linewidth=1.2,
-                           alpha=0.6, label=f'窗口结束' if i == 0 else "")
+                           alpha=0.6, label=f'可以开始考虑' if i == 0 else "")
             
             # 添加简化的窗口结束注释
             window_end_text = f'{stage1.time_window_end.strftime("%Y/%m")}'
