@@ -539,27 +539,6 @@ class StockFilter:
             if i % 2 == 0:  # 偶数年添加浅色背景
                 ax_price.axvspan(year_start, year_end, color='#f8f9fa', alpha=0.3, zorder=0)
                 
-        # 使用ZigZag连接所有高点和低点
-        if len(stage1_results) > 0:
-            zigzag_dates = []
-            zigzag_prices = []
-            
-            for i, stage1 in enumerate(stage1_results):
-                # 添加高点
-                peak_date = pd.to_datetime(stage1.historical_peak[0], format='%Y%m%d')
-                zigzag_dates.append(peak_date)
-                zigzag_prices.append(stage1.historical_peak[1])
-                
-                # 添加低点
-                if stage1.actual_low:
-                    low_date = pd.to_datetime(stage1.actual_low[0], format='%Y%m%d')
-                    zigzag_dates.append(low_date)
-                    zigzag_prices.append(stage1.actual_low[1])
-            
-            # 绘制ZigZag折线
-            ax_price.plot(zigzag_dates, zigzag_prices, color=zigzag_color, linestyle='-', 
-                         linewidth=1.5, alpha=0.7, label='ZigZag线')
-                
         # 遍历所有Stage 1结果进行绘制
         for i, stage1 in enumerate(stage1_results):
             # 使用统一颜色
@@ -587,10 +566,9 @@ class StockFilter:
                             ha='center', va='top', fontsize=9, alpha=0.7,
                             bbox=dict(boxstyle="round,pad=0.1", fc=phase_color, ec='none', alpha=0.3))
             
-            # 绘制历史高点的85%阈值线
+            # 绘制历史高点的85%阈值线，贯穿整个图表
             threshold_value = stage1.historical_peak[1] * self.price_threshold
-            ax_price.plot([peak_date - relativedelta(years=1), peak_date + relativedelta(years=1)], 
-                         [threshold_value, threshold_value], 
+            ax_price.axhline(y=threshold_value, 
                          color=threshold_color, linestyle='--', alpha=0.7, linewidth=1.5,
                          label=f'阈值线 (85%): ¥{threshold_value:.2f}' if i == 0 else "")
             
@@ -622,9 +600,8 @@ class StockFilter:
                            alpha=0.05, color=historical_high_color, edgecolor=historical_high_color, linestyle='--',
                            zorder=1, label=f'预测窗口' if i == 0 else "")
             
-            # 绘制预测低点线（使用虚线）
-            ax_price.plot([peak_date, stage1.time_window_end], 
-                         [stage1.predicted_low, stage1.predicted_low], 
+            # 绘制预测低点线（使用虚线），贯穿整个图表
+            ax_price.axhline(y=stage1.predicted_low, 
                          color=bottom_color, linestyle='--', alpha=0.7, linewidth=1.5,
                          label=f'预测低点: ¥{stage1.predicted_low:.2f}' if i == 0 else "")
             
