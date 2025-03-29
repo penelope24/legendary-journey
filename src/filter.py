@@ -561,7 +561,7 @@ class StockFilter:
                 ax_price.axvspan(peak_date, next_peak_date, 
                                color=phase_color, alpha=0.05, zorder=0)
                 # 添加文本标记周期
-                ax_price.text(peak_date + (next_peak_date - peak_date)/2, max_price*0.98, f"周期 {i+1}", 
+                ax_price.text(peak_date + (next_peak_date - peak_date)/2, max_price*0.93, f"周期 {i+1}", 
                             ha='center', va='top', fontsize=9, alpha=0.7,
                             bbox=dict(boxstyle="round,pad=0.1", fc=phase_color, ec='none', alpha=0.3))
             else:
@@ -569,7 +569,7 @@ class StockFilter:
                 ax_price.axvspan(peak_date, dates.max(), 
                                color=phase_color, alpha=0.05, zorder=0)
                 # 添加文本标记周期
-                ax_price.text(peak_date + (dates.max() - peak_date)/2, max_price*0.98, f"周期 {i+1}", 
+                ax_price.text(peak_date + (dates.max() - peak_date)/2, max_price*0.93, f"周期 {i+1}", 
                             ha='center', va='top', fontsize=9, alpha=0.7,
                             bbox=dict(boxstyle="round,pad=0.1", fc=phase_color, ec='none', alpha=0.3))
             
@@ -586,11 +586,11 @@ class StockFilter:
             window_end = original_peak_date + timedelta(days=365)
 
             # 添加窗口日期信息标签
-            ax_price.text(window_start, max_price*0.95, 
+            ax_price.text(window_start, max_price*0.85, 
                         f'窗口起始: {window_start.strftime("%Y/%m/%d")}', 
                         ha='left', va='top', fontsize=8, color=historical_high_color,
                         bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=historical_high_color, alpha=0.5))
-            ax_price.text(window_end, max_price*0.95, 
+            ax_price.text(window_end, max_price*0.80, 
                         f'窗口结束: {window_end.strftime("%Y/%m/%d")}', 
                         ha='right', va='top', fontsize=8, color=historical_high_color,
                         bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=historical_high_color, alpha=0.5))
@@ -607,30 +607,38 @@ class StockFilter:
             # 添加高点编号标签，简化注释
             ax_price.annotate(f"#{i+1}", 
                             xy=(peak_date, stage1.historical_peak[1]),
-                            xytext=(0, 10),
+                            xytext=(10, 10),  # 改变偏移量避免重叠
                             textcoords='offset points',
-                            ha='center',
+                            ha='left',  # 更改为左对齐
                             fontsize=10,
                             color=historical_high_color,
                             weight='bold')
             
-            # 绘制预测时间窗口 
+            # 绘制预测时间窗口
             prediction_window_end = peak_date + relativedelta(years=int(self.prediction_window_years), 
                                                             months=int((self.prediction_window_years % 1) * 12))
             ax_price.axvspan(peak_date, prediction_window_end, 
                            alpha=0.05, color=historical_high_color, edgecolor=historical_high_color, linestyle='--',
                            zorder=1, label=f'预测窗口' if i == 0 else "")
             
+            # 添加预测窗口结束标记
+            prediction_window_text = f'预测窗口结束: {prediction_window_end.strftime("%Y/%m")}'
+            ax_price.text(prediction_window_end, max_price*0.89, 
+                        prediction_window_text,
+                        ha='right', va='top', fontsize=8, color=historical_high_color,
+                        bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=historical_high_color, alpha=0.5),
+                        rotation=0)
+            
             # 绘制预测低点线（使用虚线），贯穿整个图表
             ax_price.axhline(y=stage1.predicted_low, 
                          color=bottom_color, linestyle='--', alpha=0.7, linewidth=1.5,
                          label=f'预测低点: ¥{stage1.predicted_low:.2f}' if i == 0 else "")
             
-            # 为预测低点添加简洁标签
-            ax_price.text(peak_date + relativedelta(months=3), 
-                        stage1.predicted_low, 
+            # 为预测低点添加简洁标签，调整位置
+            ax_price.text(peak_date + relativedelta(months=6), 
+                        stage1.predicted_low * 0.97,  # 轻微调整位置避免重叠
                         f'¥{stage1.predicted_low:.2f}',
-                        ha='left', va='bottom', fontsize=9, color=bottom_color,
+                        ha='left', va='top', fontsize=9, color=bottom_color,
                         bbox=dict(boxstyle="round,pad=0.2", fc='white', ec=bottom_color, alpha=0.85))
             
             # 绘制时间窗口结束线
@@ -639,7 +647,7 @@ class StockFilter:
             
             # 添加简化的窗口结束注释
             window_end_text = f'{stage1.time_window_end.strftime("%Y/%m")}'
-            ax_price.text(stage1.time_window_end, min_price, window_end_text,
+            ax_price.text(stage1.time_window_end, min_price*1.05, window_end_text,
                         rotation=90, ha='center', va='bottom', fontsize=8, color=historical_high_color)
             
             # 绘制实际低点（如果存在）
@@ -711,10 +719,10 @@ class StockFilter:
                                          label=f'预测第二低点: ¥{stage2.predicted_second_low:.2f}' if i == 0 else "")
                             
                             # 为预测第二低点添加简洁标签
-                            ax_price.text(rebound_date + relativedelta(months=3), 
-                                        stage2.predicted_second_low, 
+                            ax_price.text(rebound_date + relativedelta(months=6), 
+                                        stage2.predicted_second_low*0.97, 
                                         f'¥{stage2.predicted_second_low:.2f}',
-                                        ha='left', va='bottom', fontsize=8, color=bottom_color,
+                                        ha='left', va='top', fontsize=8, color=bottom_color,
                                         bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=bottom_color, alpha=0.7))
                             
                             # 添加回调点注释
@@ -756,8 +764,8 @@ class StockFilter:
         # 设置X轴标签
         ax_price.set_xlabel('日期', fontsize=12, fontweight='bold')
         
-        # 设置合适的Y轴范围
-        ax_price.set_ylim(min_price, max_price)
+        # 设置合适的Y轴范围，增加额外空间以便文字显示
+        ax_price.set_ylim(min_price*0.9, max_price*1.1)
         
         # 设置更好的网格线
         ax_price.grid(True, which='major', axis='both', linestyle='-', alpha=0.3)
@@ -794,11 +802,6 @@ class StockFilter:
         plt.figtext(0.99, 0.02, 
                    "基于历史高点和低点的迭代分析", 
                    ha="right", fontsize=9, style='italic')
-        
-        # 自动调整Y轴范围，确保所有点都可见
-        y_min = df['close'].min() * 0.9
-        y_max = df['close'].max() * 1.1
-        ax_price.set_ylim(y_min, y_max)
         
         # 显示图表
         if show:
