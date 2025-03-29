@@ -220,21 +220,23 @@ class StockFilter:
             window_peaks = []
             for peak in current_significant_peaks:
                 peak_date = pd.to_datetime(peak.time)
-                # 排除原始历史最高点本身
-                if peak.time != original_peak_time and window_start <= peak_date <= window_end:
+                # 原来的代码排除了原始历史最高点本身，现在需要修改为包含原始高点
+                if window_start <= peak_date <= window_end:
                     window_peaks.append(peak)
-                    print(f"  窗口内显著高点: {peak.time} - ¥{peak.price:.2f}")
+                    if peak.time != original_peak_time:  # 只打印窗口内的其他显著高点
+                        print(f"  窗口内显著高点: {peak.time} - ¥{peak.price:.2f}")
             
             # 选择最终的历史最高点时间
             peak_time = original_peak_time
             if window_peaks:
-                # 计算每个高点与原始最高点的时间差
-                closest_peak = min(window_peaks, 
-                                   key=lambda p: abs(pd.to_datetime(p.time) - original_peak_date))
+                # 计算每个高点与今天的时间差，选择距离今天最近的高点
+                current_date_for_comparison = current_date  # 使用当前日期作为参考
+                closest_peak = max(window_peaks, 
+                                  key=lambda p: pd.to_datetime(p.time))  # 选择日期最靠近今天的高点
                 peak_time = closest_peak.time
                 print(f"选择时间上最近的高点作为时间参考: {peak_time}")
             else:
-                print(f"窗口内无其他显著高点，使用原始历史最高点时间: {peak_time}")
+                print(f"窗口内无显著高点，使用原始历史最高点时间: {peak_time}")
             
             # 保持原始历史最高点的价格
             peak_price = original_peak_price
@@ -792,7 +794,7 @@ if __name__ == "__main__":
     import os
     
     # 创建股票数据获取器
-    stock_code = '600519.SH'  # 茅台股票代码
+    stock_code = '000166.SZ'  # 茅台股票代码
     fetcher = StockInfoFetcher(stock_code)
     
     # 获取股票数据（从2010年到现在）

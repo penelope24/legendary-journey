@@ -10,7 +10,7 @@ from typing import List, Tuple, Dict, Any, Optional, Union
 from enum import Enum, auto
 from datetime import datetime
 import matplotlib.pyplot as plt
-from src.data import StockInfoFetcher, Period
+from data import StockInfoFetcher, Period
 
 # 类型别名
 DatePrice = Tuple[str, float]  # (日期字符串, 价格)元组
@@ -357,12 +357,13 @@ def find_highest_price_point(df: pd.DataFrame, price_col: str = 'close') -> Tupl
 if __name__ == "__main__":
     # 获取茅台从20100101至今的数据并演示zigzag分析的结果
     # 创建茅台股票数据获取器 
-    stock_code = '600519.SH'  # 茅台股票代码
+    stock_code = '000166.SZ'  # 茅台股票代码
     fetcher = StockInfoFetcher(stock_code)
     
     # 获取茅台股票数据（从2010年到现在）
-    start_date = '20100101'
-    end_date = '20231231'
+    start_date = '20140101'
+    # end_date = datetime.now().strftime('%Y%m%d') 
+    end_date = '20170101'
     df = fetcher.get_kline_data(Period.WEEKLY, start_date, end_date)
     
     # 初始化ZigZag分析器
