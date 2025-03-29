@@ -526,10 +526,10 @@ class StockFilter:
         max_price = df['close'].max() * 1.1
         
         # 高亮显示分析区间（2012年至今）- 遵循设计文档
-        analysis_start = pd.to_datetime(self.analysis_start_date)
+        analysis_start = pd.to_datetime('2012-01-01')  # 强制使用固定日期而不是self.analysis_start_date
         analysis_end = dates.max()
-        # 确保只显示2012年至今的分析区间，即使数据从2010年开始
-        ax_price.axvspan(analysis_start, analysis_end, color='#f0f8ff', alpha=0.2, zorder=0, label='分析区间(2012至今)')
+        # 确保只显示2012年至今的分析区间，使用更明显的颜色
+        ax_price.axvspan(analysis_start, analysis_end, color='#cce5ff', alpha=0.4, zorder=0, label='分析区间(2012至今)')
         
         # 绘制整个图表的背景交替带，突显年份区域
         years = pd.DatetimeIndex(dates).year.unique()
@@ -750,7 +750,7 @@ class StockFilter:
         # 设置主价格图的标题和标签
         title = f'{stock_code} 股票迭代分析结果'
         if len(stage1_results) > 0:
-            title += f' - 共{len(stage1_results)}轮分析 (2010-{pd.Timestamp.now().year})'
+            title += f' - 共{len(stage1_results)}轮分析 (2012-{pd.Timestamp.now().year})'
         ax_price.set_title(title, fontsize=16, fontweight='bold', pad=15)
         ax_price.set_ylabel('价格 (元)', fontsize=12, fontweight='bold')
         ax_price.yaxis.set_label_coords(-0.01, 0.5)  # 调整y轴标签位置
