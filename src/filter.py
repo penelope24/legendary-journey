@@ -156,8 +156,8 @@ class StockFilter:
         print("计算整个时间范围内的显著峰值...")
         full_analyzer = SignificantPeakAnalyzer(temp_df)
         full_peak_result = full_analyzer.analyze(
-            peak_threshold=self.price_threshold,
-            zigzag_threshold=0.06  # ZigZag阈值
+            threshold_percentage=self.price_threshold,
+            threshold=0.06  # ZigZag阈值
         )
         
         # 获取所有显著高点
