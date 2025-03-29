@@ -31,6 +31,8 @@ class Stage1Result:
         historical_peak (Tuple[str, float]): 历史最高点信息
             - str: 时间，格式为'YYYYMMDD'
             - float: 最高点价格
+        original_peak_date (str): 原始历史最高点时间
+            格式为'YYYYMMDD'，用于确定高点时间窗口位置
         predicted_low (float): 预测低点价格
             计算方法：历史最高点价格 * 0.3
         time_window_end (datetime): 预测时间窗口的结束日期
@@ -48,6 +50,7 @@ class Stage1Result:
             - "不满足条件": 未找到实际低点
     """
     historical_peak: Tuple[str, float]  # (时间, 价格)
+    original_peak_date: str  # 原始高点日期，用于窗口位置
     predicted_low: float
     time_window_end: datetime
     actual_low: Optional[Tuple[str, float]]  # (时间, 价格)
@@ -257,6 +260,7 @@ class StockFilter:
                 # 如果没有找到实际低点，创建结果并结束迭代
                 result = Stage1Result(
                     historical_peak=(peak_time, peak_price),
+                    original_peak_date=original_peak_time,
                     predicted_low=predicted_low,
                     time_window_end=time_window_end,
                     actual_low=None,
@@ -273,6 +277,7 @@ class StockFilter:
             # 创建结果
             result = Stage1Result(
                 historical_peak=(peak_time, peak_price),
+                original_peak_date=original_peak_time,
                 predicted_low=predicted_low,
                 time_window_end=time_window_end,
                 actual_low=actual_low,
@@ -575,9 +580,23 @@ class StockFilter:
                          label=f'阈值线 (85%): ¥{threshold_value:.2f}' if i == 0 else "")
             
             # 绘制历史高点区域（前后1年的时间窗口）
-            peak_highlight_start = peak_date - relativedelta(years=1)
-            peak_highlight_end = peak_date + relativedelta(years=1)
-            ax_price.axvspan(peak_highlight_start, peak_highlight_end, 
+            # 获取分析时使用的确切窗口时间（使用原始高点日期确定窗口位置）
+            original_peak_date = pd.to_datetime(stage1.original_peak_date, format='%Y%m%d')
+            window_start = original_peak_date - timedelta(days=365)
+            window_end = original_peak_date + timedelta(days=365)
+
+            # 添加窗口日期信息标签
+            ax_price.text(window_start, max_price*0.95, 
+                        f'窗口起始: {window_start.strftime("%Y/%m/%d")}', 
+                        ha='left', va='top', fontsize=8, color=historical_high_color,
+                        bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=historical_high_color, alpha=0.5))
+            ax_price.text(window_end, max_price*0.95, 
+                        f'窗口结束: {window_end.strftime("%Y/%m/%d")}', 
+                        ha='right', va='top', fontsize=8, color=historical_high_color,
+                        bbox=dict(boxstyle="round,pad=0.1", fc='white', ec=historical_high_color, alpha=0.5))
+
+            # 使用确切的窗口时间绘制高点区域
+            ax_price.axvspan(window_start, window_end, 
                            alpha=0.1, color=historical_high_color, edgecolor=None, zorder=1)
             
             # 绘制历史最高点
@@ -794,7 +813,7 @@ if __name__ == "__main__":
     import os
     
     # 创建股票数据获取器
-    stock_code = '000166.SZ'  # 茅台股票代码
+    stock_code = '000596.SZ'  # 茅台股票代码
     fetcher = StockInfoFetcher(stock_code)
     
     # 获取股票数据（从2010年到现在）
