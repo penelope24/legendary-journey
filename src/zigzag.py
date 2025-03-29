@@ -10,7 +10,7 @@ from typing import List, Tuple, Dict, Any, Optional, Union
 from enum import Enum, auto
 from datetime import datetime
 import matplotlib.pyplot as plt
-from data import StockInfoFetcher, Period
+from src.data import StockInfoFetcher, Period
 
 # 类型别名
 DatePrice = Tuple[str, float]  # (日期字符串, 价格)元组
