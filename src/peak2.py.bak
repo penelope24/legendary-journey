@@ -1,0 +1,134 @@
+"""
+显著峰值分析核心模块
+
+提供简化版的显著峰值分析算法，用于识别价格序列中的重要高点和低点。
+"""
+
+import pandas as pd
+import numpy as np
+from typing import List, Tuple, Dict, Any, Optional, Union, ForwardRef
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+
+from src.zigzag import ZigZag
+
+def find_highest_price_point(df: pd.DataFrame, price_col: str = 'close') -> Tuple[str, float]:
+    """
+    从DataFrame中找出价格最高的点
+    
+    Args:
+        df: 包含价格数据的DataFrame
+        price_col: 价格列名，默认为'close'
+        
+    Returns:
+        Tuple[str, float]: (日期字符串, 最高价格)
+    """
+    # 获取最高价格的索引
+    max_idx = df[price_col].idxmax()
+    
+    # 获取对应的日期和价格
+    max_date = df.loc[max_idx, 'trade_date']
+    max_price = df.loc[max_idx, price_col]
+    
+    # 将日期格式化为字符串
+    if isinstance(max_date, (pd.Timestamp, datetime, np.datetime64)):
+        max_date_str = pd.Timestamp(max_date).strftime('%Y%m%d')
+    else:
+        max_date_str = str(max_date)
+    
+    return max_date_str, float(max_price)
+
+@dataclass
+class SignificantBot:
+    """显著低点数据类"""
+    time: str  # 日期字符串 YYYYMMDD
+    price: float
+    next_peak: Optional['SignificantPeak']  # 下一个显著高点，可能为None（最后一个低点）
+    annotation: Optional[Dict[str, Any]] = None  # 用于存储额外信息，如与历史最低点的差值等
+
+@dataclass
+class SignificantPeak:
+    """显著高点数据类"""
+    time: str  # 日期字符串 YYYYMMDD
+    price: float
+    rank: int  # 按价格从高到低排序的排名（从1开始）
+    next_bot: Optional['SignificantBot']  # 下一个显著低点，可能为None（最后一个高点）
+    annotation: Optional[Dict[str, Any]] = None  # 用于存储额外信息，如与历史最高点的差值等
+
+# 更新前向引用
+SignificantBot.__annotations__['next_peak'] = SignificantPeak
+SignificantPeak.__annotations__['next_bot'] = SignificantBot
+
+
+class SignificantPeakAnalyzer2:
+    """
+    显著峰值分析类，用于识别价格序列中的重要高点和低点。
+    
+    主要功能：
+    1. 使用ZigZag算法识别价格序列中的转折点
+    2. 分析转折点，识别显著高点和低点
+    3. 基于历史最高点设置阈值，筛选重要高点
+    4. 计算高点和低点之间的关系和属性
+    """
+    
+    def __init__(self, df: pd.DataFrame, price_col: str = 'close'):
+        """
+        初始化显著峰值分析器
+        
+        Args:
+            df: 价格数据DataFrame，必须包含'trade_date'列和price_col指定的价格列
+            price_col: 价格列名，默认为'close'
+            
+        Raises:
+            ValueError: 当DataFrame缺少必要的列或数据格式不正确时
+        """
+        pass
+        
+    def find_all_significant_points(self, threshold: float = 0.05) -> Tuple[List[SignificantPeak], List[SignificantBot]]:
+        """
+        寻找所有显著高点和低点
+        
+        Args:
+            threshold: ZigZag分析的阈值，默认为0.05（5%）
+            
+        Returns:
+            Tuple[List[SignificantPeak], List[SignificantBot]]: 显著高点和低点列表的元组
+            
+        Raises:
+            ValueError: 当threshold不在(0,1)范围内时
+            RuntimeError: 当无法识别出任何显著点时
+            
+        处理流程：
+        1. 用zigzag方法找到所有的zigzag拐点
+        2. 对每个拐点，分析其是波峰还是波谷：
+           - 如果是波峰，记录为SignificantPeak，并计算其下一个波谷SignificantBot
+           - 如果是波谷，记录为SignificantBot，并计算其下一个波峰SignificantPeak
+        3. 返回所有显著高点和显著低点的列表
+        """
+        pass
+    
+    def find_significant_peaks_with_threshold(self, threshold: float = 0.85) -> List[SignificantPeak]:
+        """
+        寻找满足特定基线的显著高点
+        
+        Args:
+            threshold: 标准线占历史最高点价格的百分比，默认为0.85（85%）
+            
+        Returns:
+            List[SignificantPeak]: 满足基线要求的显著高点列表，按价格从高到低排序
+            
+        Raises:
+            ValueError: 当threshold不在(0,1)范围内时
+            RuntimeError: 当无法找到历史最高点时
+            
+        处理流程：
+        1. 调用find_all_significant_points方法分析，获取所有显著高点列表
+        2. 调用find_highest_price_point方法找到价格曲线的历史最高点
+        3. 以最高点为基准确定显著高点基线（最高点价格的threshold倍）
+        4. 返回所有满足基线要求的显著高点列表，并按照价格从高到低排序计算rank值
+        5. 对于排名第一的显著高点：
+           - 检测其price是否等于实际价格的历史最高点
+           - 如果不相等，更新price为历史最高点的价格值
+           - 在annotation中记录zigzag点和历史最高点价格的差值
+        """
+        pass

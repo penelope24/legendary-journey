@@ -1,0 +1,427 @@
+"""
+显著峰值分析核心模块
+
+提供简化版的显著峰值分析算法，用于识别价格序列中的重要高点和低点。
+"""
+
+import pandas as pd
+import numpy as np
+from typing import List, Tuple, Dict, Any, Optional, Union
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+
+from src.zigzag import ZigZag
+
+def find_highest_price_point(df: pd.DataFrame, price_col: str = 'close') -> Tuple[str, float]:
+    """
+    从DataFrame中找出价格最高的点
+    
+    Args:
+        df: 包含价格数据的DataFrame
+        price_col: 价格列名，默认为'close'
+        
+    Returns:
+        Tuple[str, float]: (日期字符串, 最高价格)
+    """
+    # 获取最高价格的索引
+    max_idx = df[price_col].idxmax()
+    
+    # 获取对应的日期和价格
+    max_date = df.loc[max_idx, 'trade_date']
+    max_price = df.loc[max_idx, price_col]
+    
+    # 将日期格式化为字符串
+    if isinstance(max_date, (pd.Timestamp, datetime, np.datetime64)):
+        max_date_str = pd.Timestamp(max_date).strftime('%Y%m%d')
+    else:
+        max_date_str = str(max_date)
+    
+    return max_date_str, float(max_price)
+
+@dataclass
+class SignificantBot:
+    """显著低点数据类"""
+    time: str  # 日期字符串 YYYYMMDD
+    price: float
+    next_peak: SignificantPeak  # 下一个显著高点
+
+@dataclass
+class SignificantPeak:
+    """显著高点数据类"""
+    time: str  # 日期字符串 YYYYMMDD
+    price: float
+    rank: int
+    next_bot: SignificantBot  # 下一个显著低点
+
+
+class SignificantPeakAnalyzer:
+    """
+    显著峰值分析类，简化版
+    
+    算法流程：
+    1. 找到历史数据中的所有显著高点（相对于历史最高点价格高于特定阈值的波峰）
+    2. 为每个显著高点找到对应的显著低点
+    3. 计算高低点的周期长度和相关属性
+    """
+    
+    def __init__(self, df: pd.DataFrame, price_col: str = 'close'):
+        """
+        初始化显著峰值分析器
+        
+        Args:
+            df: 价格数据DataFrame，必须包含'trade_date'列和price_col指定的价格列
+            price_col: 价格列名，默认为'close'
+        """
+        self.df = df.copy()
+        self.price_col = price_col
+        
+        # 确保trade_date列是datetime类型
+        if not pd.api.types.is_datetime64_any_dtype(df['trade_date']):
+            self.df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        # 创建ZigZag分析器
+        self.zigzag = ZigZag(df, price_col=price_col)
+    
+    def analyze(self, 
+               threshold_percentage: float = 0.85, 
+               threshold: float = 0.05,
+               min_peak_distance: Optional[int] = None) -> Dict[str, Any]:
+        """
+        执行显著峰值分析
+        
+        Args:
+            threshold_percentage: 标准线占历史最高点价格的百分比，默认为0.85（85%）
+            threshold: ZigZag分析的阈值，默认为0.05（5%）
+            min_peak_distance: 两个显著高点之间的最小时间间隔（天数），可选
+            
+        Returns:
+            Dict[str, Any]: 分析结果，包含显著高点列表和相关信息
+        """
+        # 参数验证
+        if not 0 < threshold < 1:
+            raise ValueError(f"ZigZag阈值必须在0和1之间，当前值: {threshold}")
+        if not 0 < threshold_percentage < 1:
+            raise ValueError(f"标准线百分比必须在0和1之间，当前值: {threshold_percentage}")
+        if min_peak_distance is not None and min_peak_distance <= 0:
+            raise ValueError(f"最小峰值距离必须为正整数，当前值: {min_peak_distance}")
+        
+        # 使用ZigZag分析器找出转折点
+        zigzag_result = self.zigzag.analyze(threshold=threshold)
+        zigzag_points = zigzag_result.get('points', [])
+        
+        if not zigzag_points:
+            return {
+                'error': '未识别出显著转折点',
+                'significant_peaks': [],
+                'historical_high': None,
+                'threshold_line': None,
+                'zigzag_points': []
+            }
+        
+        # 转换所有日期为datetime对象以便比较
+        zigzag_points_parsed = []
+        for date_str, price in zigzag_points:
+            try:
+                date = pd.to_datetime(date_str)
+                zigzag_points_parsed.append((date, price))
+            except ValueError:
+                # 如果日期解析失败，跳过这个点
+                continue
+        
+        if not zigzag_points_parsed:
+            return {
+                'error': '无法解析转折点日期',
+                'significant_peaks': [],
+                'historical_high': None,
+                'threshold_line': None,
+                'zigzag_points': []
+            }
+        
+        # 找出所有波峰和波谷
+        peak_points = []
+        bottom_points = []
+        
+        # 第一个点通常是波峰或波谷，需要特殊处理
+        if len(zigzag_points_parsed) > 1:
+            first_date, first_price = zigzag_points_parsed[0]
+            second_date, second_price = zigzag_points_parsed[1]
+            
+            if first_price > second_price:  # 第一个点比第二个点高，是波峰
+                peak_points.append((first_date, first_price))
+            else:  # 第一个点比第二个点低，是波谷
+                bottom_points.append((first_date, first_price))
+        
+        # 处理剩余点，波峰和波谷交替出现
+        for i in range(1, len(zigzag_points_parsed) - 1):
+            curr_date, curr_price = zigzag_points_parsed[i]
+            prev_date, prev_price = zigzag_points_parsed[i-1]
+            next_date, next_price = zigzag_points_parsed[i+1]
+            
+            if curr_price > prev_price and curr_price > next_price:  # 波峰
+                peak_points.append((curr_date, curr_price))
+            elif curr_price < prev_price and curr_price < next_price:  # 波谷
+                bottom_points.append((curr_date, curr_price))
+        
+        # 处理最后一个点
+        if len(zigzag_points_parsed) > 1:
+            last_date, last_price = zigzag_points_parsed[-1]
+            second_last_date, second_last_price = zigzag_points_parsed[-2]
+            
+            if last_price > second_last_price:  # 最后一个点比倒数第二个点高，是波峰
+                peak_points.append((last_date, last_price))
+            else:  # 最后一个点比倒数第二个点低，是波谷
+                bottom_points.append((last_date, last_price))
+        
+        # 如果没有识别出波峰点，直接寻找最高点
+        if not peak_points:
+            # 直接从DataFrame中找出最高点
+            highest_date_str, highest_price = find_highest_price_point(self.df, self.price_col)
+            highest_date = pd.to_datetime(highest_date_str)
+            
+            return {
+                'error': '使用ZigZag未识别出波峰点，已找出最高点',
+                'significant_peaks': [],
+                'historical_high': {
+                    'time': highest_date_str,
+                    'price': highest_price
+                },
+                'threshold_line': highest_price * threshold_percentage,
+                'zigzag_points': [(date.strftime('%Y%m%d'), price) for date, price in zigzag_points_parsed]
+            }
+        
+        # 找出所有波峰点中的最高点
+        historical_high = max(peak_points, key=lambda x: x[1])
+        highest_date, highest_price = historical_high
+        
+        # 计算标准线
+        threshold_line = highest_price * threshold_percentage
+        
+        # 筛选显著高点（高于标准线的波峰点）
+        significant_peak_points = [point for point in peak_points if point[1] >= threshold_line]
+        
+        # 应用最小峰值距离筛选（如果指定）
+        if min_peak_distance is not None and len(significant_peak_points) > 1:
+            filtered_peaks = [significant_peak_points[0]]
+            min_time_delta = timedelta(days=min_peak_distance)
+            
+            for peak in significant_peak_points[1:]:
+                if peak[0] - filtered_peaks[-1][0] >= min_time_delta:
+                    filtered_peaks.append(peak)
+            
+            significant_peak_points = filtered_peaks
+        
+        # 按价格降序排序
+        significant_peak_points.sort(key=lambda x: x[1], reverse=True)
+        
+        # 构建结果数据结构
+        significant_peaks = []
+        
+        for i, (peak_date, peak_price) in enumerate(significant_peak_points):
+            # 为每个显著高点找到对应的显著低点
+            next_peak = significant_peak_points[i+1][0] if i+1 < len(significant_peak_points) else None
+            
+            # 在当前高点之后，下一个高点之前寻找最低点
+            corresponding_bottom = self._find_corresponding_bottom(
+                peak_date, 
+                next_peak, 
+                bottom_points
+            )
+            
+            # 如果找到了对应的底部点
+            if corresponding_bottom:
+                bot_date, bot_price = corresponding_bottom
+                
+                # 计算下跌百分比
+                drop_percentage = (peak_price - bot_price) / peak_price
+                
+                # 计算周期长度（天数）
+                cycle_len = (bot_date - peak_date).days
+                
+                # 创建底部点对象
+                bottom = SignificantBot(
+                    time=bot_date.strftime('%Y%m%d'),
+                    price=bot_price,
+                    drop_percentage=drop_percentage
+                )
+            else:
+                bottom = None
+                cycle_len = None
+            
+            # 创建高点对象
+            peak = SignificantPeak(
+                time=peak_date.strftime('%Y%m%d'),
+                price=peak_price,
+                rank=i,
+                bottom=bottom,
+                cycle_len=cycle_len,
+                relative_strength=peak_price / highest_price
+            )
+            
+            significant_peaks.append(peak)
+        
+        # 返回分析结果
+        result = {
+            'method': 'significant_peak_analysis',
+            'historical_high': {
+                'time': highest_date.strftime('%Y%m%d'),
+                'price': highest_price
+            },
+            'threshold_line': threshold_line,
+            'threshold_percentage': threshold_percentage,
+            'significant_peaks': significant_peaks,
+            'zigzag_points': [(date.strftime('%Y%m%d'), price) for date, price in zigzag_points_parsed]
+        }
+        
+        return result
+    
+    def _find_corresponding_bottom(self, 
+                                  current_peak_date: datetime, 
+                                  next_peak_date: Optional[datetime], 
+                                  bottom_points: List[Tuple[datetime, float]]) -> Optional[Tuple[datetime, float]]:
+        """
+        为给定的显著高点寻找对应的显著低点
+        
+        Args:
+            current_peak_date: 当前高点的日期
+            next_peak_date: 下一个高点的日期，如果没有则为None
+            bottom_points: 所有波谷点列表
+            
+        Returns:
+            Optional[Tuple[datetime, float]]: 对应的显著低点，如果没有找到则为None
+        """
+        # 筛选出当前高点之后的所有波谷点
+        candidates = [point for point in bottom_points if point[0] > current_peak_date]
+        
+        # 如果有下一个高点，进一步筛选出在下一个高点之前的波谷点
+        if next_peak_date is not None:
+            candidates = [point for point in candidates if point[0] < next_peak_date]
+        
+        if not candidates:
+            return None
+        
+        # 从候选波谷点中选择价格最低的一个
+        return min(candidates, key=lambda x: x[1])
+    
+    
+if __name__ == "__main__":
+    # 示例演示显著峰值分析
+    import matplotlib.pyplot as plt
+    from data import StockInfoFetcher, Period
+    
+    # 创建茅台股票数据获取器 
+    stock_code = '600519.SH'  # 茅台股票代码
+    fetcher = StockInfoFetcher(stock_code)
+    
+    # 获取茅台股票数据（从2010年到现在）
+    start_date = '20100101'
+    end_date = '20231231'
+    df = fetcher.get_kline_data(Period.WEEKLY, start_date, end_date)
+    
+    # 初始化显著峰值分析器
+    analyzer = SignificantPeakAnalyzer(df)
+    
+    # 执行分析（使用默认参数）
+    result = analyzer.analyze(threshold_percentage=0.85, threshold=0.06)
+    
+    # 提取分析结果
+    historical_high = result['historical_high']
+    threshold_line = result['threshold_line']
+    significant_peaks = result['significant_peaks']
+    zigzag_points = result['zigzag_points']
+    
+    # 打印结果
+    print(f"历史最高点: {historical_high['time']} - ¥{historical_high['price']:.2f}")
+    print(f"标准线(85%): ¥{threshold_line:.2f}")
+    print(f"找到 {len(significant_peaks)} 个显著高点:")
+    
+    for i, peak in enumerate(significant_peaks):
+        peak_info = f"  [{i+1}] {peak.time}: ¥{peak.price:.2f} (相对强度: {peak.relative_strength:.2f})"
+        
+        if peak.bottom:
+            bottom = peak.bottom
+            peak_info += f" -> 低点: {bottom.time}: ¥{bottom.price:.2f} (下跌: {bottom.drop_percentage:.2%})"
+            
+            if peak.cycle_len:
+                peak_info += f", 周期: {peak.cycle_len} 天"
+        
+        print(peak_info)
+    
+    # 可视化
+    plt.figure(figsize=(14, 7))
+    
+    # 绘制原始价格
+    dates = pd.to_datetime(df['trade_date'])
+    plt.plot(dates, df['close'], 'gray', alpha=0.5, label='Moutai Weekly Close')
+    
+    # 绘制ZigZag折线
+    zigzag_dates = [pd.to_datetime(date) for date, _ in zigzag_points]
+    zigzag_prices = [price for _, price in zigzag_points]
+    plt.plot(zigzag_dates, zigzag_prices, 'b-', linewidth=1.5, alpha=0.7, label='ZigZag Line')
+    
+    # 绘制标准线
+    plt.axhline(y=threshold_line, color='orange', linestyle='--', 
+                label=f'Threshold Line (85%): ¥{threshold_line:.2f}')
+    
+    # 绘制历史最高点
+    highest_date = pd.to_datetime(historical_high['time'])
+    plt.scatter([highest_date], [historical_high['price']], 
+                c='purple', s=150, marker='*', 
+                label=f"Historical High: ¥{historical_high['price']:.2f}")
+    
+    # 绘制显著高点
+    for i, peak in enumerate(significant_peaks):
+        peak_date = pd.to_datetime(peak.time)
+        
+        # 显著高点标记
+        plt.scatter([peak_date], [peak.price], 
+                   c='red', s=100, marker='^', 
+                   label=f"Peak #{i+1}" if i==0 else "")
+        
+        # 添加高点标签
+        plt.annotate(f"#{i+1}", 
+                    xy=(peak_date, peak.price),
+                    xytext=(0, 10),
+                    textcoords='offset points',
+                    ha='center')
+        
+        # 如果有对应的低点，也绘制出来
+        if peak.bottom:
+            bottom_date = pd.to_datetime(peak.bottom.time)
+            
+            # 低点标记
+            plt.scatter([bottom_date], [peak.bottom.price], 
+                       c='green', s=100, marker='v',
+                       label="Bottom Point" if i==0 else "")
+            
+            # 添加从高点到低点的连线
+            plt.plot([peak_date, bottom_date], 
+                    [peak.price, peak.bottom.price], 
+                    'r--', alpha=0.6)
+            
+            # 计算标签位置，避免重叠
+            xytext_y = -25 if i % 2 == 0 else -40
+            
+            # 添加低点标签（显示下跌百分比）
+            plt.annotate(f"↓{peak.bottom.drop_percentage:.1%}", 
+                        xy=(bottom_date, peak.bottom.price),
+                        xytext=(0, xytext_y),
+                        textcoords='offset points',
+                        ha='center')
+    
+    # 设置图表
+    plt.title(f'Moutai Stock Significant Peak Analysis (2010-2023)')
+    plt.xlabel('Date')
+    plt.ylabel('Price (CNY)')
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='upper left')
+    
+    # 自动调整Y轴范围，确保所有点都可见
+    y_min = min(p[1] for p in zigzag_points) * 0.9
+    y_max = max(p[1] for p in zigzag_points) * 1.1
+    plt.ylim(y_min, y_max)
+    
+    # 显示图表
+    plt.tight_layout()
+    plt.show()
+    
+    
